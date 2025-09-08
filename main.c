@@ -57,7 +57,7 @@ char *shl_read_line(void){
         position++;
 
         // if exceed buffer, relocate
-        if ( position >= buffesize){
+        if ( position >= bufsize){
             bufsize += SHL_RL_BUFSIZE;
             buffer = realloc(buffer, bufsize);
             if (!buffer){
@@ -68,4 +68,33 @@ char *shl_read_line(void){
     }
 }
 
+#define SHL_TOK_BUFSIZE 64
+#define SHL_TOK_DELIM " \t\r\n\a"
+char **shl_split_line(char *line){
+    int bufsize = SHL_TOK_BUFSIZE, position = 0;
+    char **tokens = malloc(bufsize * sizeof(char*));
+    char *token;
 
+    if (!tokens){
+        fprintf(stderr, "lsh: allocation error\n");
+        exit(EXIT_FAILURE);
+    }
+
+    token = strtok(line, SHL_TOK_DELIM);
+    while (token != NULL){
+        tokens[position] = token;
+        position++;
+
+        if (position >= bufsize){
+            bufsize += SHL_TOK_BUFSIZE;
+            tokens = realloc(tokens, bufsize * sizeof(char*));
+            if (!tokens){
+                fprintf(stderr, "lsh: allocation error\n");
+                exit(EXIT_FAILURE);
+            }
+        }
+        token = strtok(NULL, SHL_TOK_DELIM);
+    }
+    tokens[position] = NULL;
+    return tokens;
+}
