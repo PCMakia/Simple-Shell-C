@@ -3,13 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-
-
-
-// Shell command
-int shl_cd(char **args);
-int shl_help(char **args);
-int shl_exit(char **args);
+#include "header.h"
 
 char *builtin_str[] = {
     "cd",
