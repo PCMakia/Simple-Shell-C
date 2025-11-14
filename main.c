@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 #include "header.h"
 
 
@@ -129,7 +130,7 @@ char *shl_read_line(void){
     }
 }
 
-#define SHL_PIPE_BUFF 256
+#define SHL_PIPE_BUFF 20
 int shl_pipe(char *line) {
     // Split the line into pipeline segments
     char *commands[SHL_PIPE_BUFF];  
@@ -150,7 +151,10 @@ int shl_pipe(char *line) {
 
     // If no pipe, execute normally
     if (cmd_count == 1) {
-        char **args = shl_split_line(commands[0]);
+        char **args = shl_tokenizer(commands[0]);
+        /* for (int i = 0; args[i] != NULL; i++) {
+        printf("Arg %d: %s\n", i, args[i]);
+        }  For testing new tokenizer */
         int status = shl_execute(args);
         free(args);
         return status;
@@ -193,7 +197,10 @@ int shl_pipe(char *line) {
                 close(next_pipe[1]);
             }
 
-            char **args = shl_split_line(commands[i]);
+            char **args = shl_tokenizer(commands[i]);
+           /* for (int i = 0; args[i] != NULL; i++) {
+            printf("Arg %d: %s\n", i, args[i]);
+            }  For testing new tokenizer */
             shl_execute(args);
             free(args);
 
@@ -255,6 +262,198 @@ char **shl_split_line(char *line){
     return tokens;
 }
 
+void append_char(char **buf, int *len, int *cap, char c) {
+    if (*len + 2 >= *cap) {
+        *cap *= 2;
+        char *tmp = realloc(*buf, *cap);
+        if (!tmp) {
+            perror("append realloc failed");
+            exit(1);
+        }
+        *buf = tmp;
+    }
+    (*buf)[(*len)++] = c;
+    (*buf)[*len] = '\0';
+}
+
+
+char **shl_tokenizer(char *line){
+    // iterate through command line, if see \: treat next as literal,
+    // if see ": find " while still allow \ to escape,
+    // if see ': find ' and ensure no escape,
+    // if see *space*: separate to next term in list
+    int bufsize = SHL_TOK_BUFSIZE, position = 0;
+    char **commands = calloc(bufsize, sizeof(char*));
+
+    int cmdCap = 64;
+    int cmdLen = 0;
+    char *cmd = malloc(cmdCap);
+    if (!cmd) { fprintf(stderr, "shl: initialize tokenizer allocation error\n"); exit(EXIT_FAILURE); }
+    cmd[0] = '\0';
+
+
+    char **Rlist;
+    int Rlength;
+    if (!commands){
+        fprintf(stderr, "shl: tokenizer allocation error\n");
+        exit(EXIT_FAILURE);
+    }
+     // for wild *, "", '', [], ?
+    bool wild = false, doubQ = false, singleQ = false, sq = false, sqR = false;
+   
+    for (int i = 0; line[i] != '\0'; i++){
+        if (wild) {
+            // add all totens till *space*
+            if (isspace(line[i])) {
+                wild = false;
+                commands[position++] = strdup(cmd);
+                cmdLen = 0;
+                cmd[0] = '\0';
+                // resize if needed
+                if (position >= bufsize){
+                    bufsize += SHL_TOK_BUFSIZE;
+                    commands = realloc(commands, bufsize * sizeof(char*));
+                    if (!commands){
+                        fprintf(stderr, "shl: command list allocation error during wild\n");
+                        exit(EXIT_FAILURE);
+                    }
+                }
+                continue;
+            }
+            append_char(&cmd, &cmdLen, &cmdCap, line[i]);
+            continue;
+        }
+        if (sqR) {
+            // handle range matching
+            for (int j = 0; j < Rlength; j++) {
+                if (line[i] == Rlist[j][0]) {  // compare char to first char of string
+                    append_char(&cmd, &cmdLen, &cmdCap, line[i]);
+                }
+            }
+            sqR = false;
+            continue;
+        }    
+        
+        switch (line[i]) {
+            case '\\':
+                if (doubQ || !singleQ){ // allow escape in double quotes
+                    i++;
+                    append_char(&cmd, &cmdLen, &cmdCap, line[i]);
+                } else {
+                    append_char(&cmd, &cmdLen, &cmdCap, line[i]);
+                }
+                break;
+            case '"': // double quote, allow escape
+                doubQ = !doubQ;
+                break;
+            case '\'': // single quote, no escape allowed
+                singleQ = !singleQ;
+                break;
+            case '*':
+                wild = true;
+                break;
+            case '?': // match any single character
+                append_char(&cmd, &cmdLen, &cmdCap, line[i]);
+                break;
+            case '[': 
+                sq = true;
+
+                char *startP = &line[i];
+                char *endP = strchr(startP, ']');
+                if (!endP) {
+                    perror("shl: unmatched ] in range");
+                    exit(EXIT_FAILURE);
+                    break;
+                }
+
+                // find '-' inside the bracket
+                char *dash = strchr(startP, '-');
+                if (dash && dash < endP) {
+                    sqR = true;
+
+                    char c1 = startP[1];
+                    char c2 = dash[1];
+
+                    if (isdigit(c1) && isdigit(c2)) {
+                        int start = c1 - '0';
+                        int end   = c2 - '0';
+
+                        Rlength = end - start + 1;
+                        Rlist = malloc(Rlength * sizeof(char*));
+
+                        for (int n = start; n <= end; n++) {
+                            char *buf = malloc(12);
+                            sprintf(buf, "%d", n);
+                            Rlist[n - start] = buf;
+                        }
+                        i = (endP - line);
+                    }
+                }
+                
+                break;
+
+
+           /* case '[':
+                // match all within set 1 digit numbers [0-9] (could implement negate or category later)
+                sq = true;
+                int check = find('-', &line[i]);
+                if (check != -1) {
+                    // range detected
+                    sqR = true;
+                    if (isdigit(line[i+1])) {
+                        char* num_start = "";
+                        char* num_end = "";
+                        num_start += line[i+1];
+                        num_end += line[check+1];
+                        int start = atoi(num_start);
+                        int end = atoi(num_end);
+                        Rlist = malloc((end - start + 1) * sizeof(int*));
+                        for (int n = start; n <= end + 1; n++) {
+                            Rlist[n - start] = str(n);
+                        }
+                    }
+                }
+        */
+            case ']':
+                if (!sqR) {
+                    sq = false;
+                    break;
+                }
+                perror("shl: unmatched ] in range");
+                exit(EXIT_FAILURE);
+                break;
+            case ' ':
+                if (!doubQ && !singleQ) {
+                    // end of command
+                    commands[position++] = strdup(cmd);
+                    cmdLen = 0;
+                    cmd[0] = '\0';    
+
+                    // resize if needed
+                    if (position >= bufsize){
+                        bufsize += SHL_TOK_BUFSIZE;
+                        commands = realloc(commands, bufsize * sizeof(char*));
+                        if (!commands){
+                            fprintf(stderr, "shl: command list allocation error\n");
+                            exit(EXIT_FAILURE);
+                        }
+                    }
+                }
+                else {
+                    append_char(&cmd, &cmdLen, &cmdCap, line[i]);
+                }
+                break;
+            default:
+                append_char(&cmd, &cmdLen, &cmdCap, line[i]);
+        }
+    }
+    if (cmdLen > 0) {
+    commands[position++] = strdup(cmd);
+    }
+    commands[position] = NULL;
+    free(cmd);
+    return commands;
+}
 
 void shl_loop(void){
     // initialize
