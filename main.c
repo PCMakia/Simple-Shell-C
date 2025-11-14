@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include "header.h"
 
 char *builtin_str[] = {
@@ -127,6 +128,115 @@ char *shl_read_line(void){
     }
 }
 
+#define SHL_PIPE_BUFF 256
+int shl_pipe(char *commands_line){
+    // find | in commands, then separate them 
+    // and execute split_line on each cluster
+    char **args;
+    int status;
+    char *check = strchr(commands_line, '|');
+
+    if (check == NULL) {
+        // execute single
+        args = shl_split_line(commands_line);
+        status = shl_execute(args);
+
+        free(args);
+        
+        return status;
+    }
+    char *command = strtok(commands_line, "|");
+    // encapsule in loop to keep making pipe
+    do{
+    int pipefd[2];
+    int pipeRet[2];
+    int buff_size = SHL_PIPE_BUFF;
+    char *buff = malloc(sizeof(char) * buff_size);
+    
+    int pip = pipe(pipefd);
+    if (pip == -1) {
+        perror("pipe input failed");
+        exit(EXIT_FAILURE);
+    }
+    int pipR = pipe(pipeRet);
+    if (pipR == -1) {
+        perror("pipe return failed");
+        exit(EXIT_FAILURE);
+    }
+    // from here divide work into child and parent if else loop
+    // do pipe line work and return status code
+    
+
+    
+    // prune white spaces between commands
+    int start = 0;
+    int end = strlen(command) - 1;
+    
+    while (isspace((unsigned char)command[end])) {end--;}
+    while (isspace((unsigned char)command[start])) {start++; }
+    char *newstr = (char *)malloc( sizeof(char) * (end - start + 2) );
+    strncpy(newstr, command + start, end - start + 1);
+    newstr[end - start + 1] = '\0';
+    strcpy(command, newstr);
+    free(newstr);
+        
+
+    pid_t pid_1,wpid;
+    int status;
+
+    pid_1 = fork();
+    if (pid_1 == -1){
+        perror("shl: fork failed");
+        exit(EXIT_FAILURE);
+    } 
+
+
+        // execute command, get new command, pipe them?
+    if (pid_1 == 0) {
+        // child pipe (read from pipefd and write result to pipeRet)
+        close(pipefd[0]);
+        close(pipeRet[1]);
+
+        dup2(pipefd[1], STDOUT_FILENO);
+        
+        args = shl_split_line(command);
+        status = shl_execute(args);
+        free(args);
+        close(pipefd[1]);
+    } else {
+        // parent pipe (read from pipeRet, and write instructions to pipefd)
+        close(pipefd[1]);
+        close(pipeRet[0]);
+        //command = strtok(NULL, "|");
+        pid_t pid_2 = fork();
+        if (pid_2 == 0) {
+            // second child to read from first child
+            dup2(pipefd[0], STDIN_FILENO);
+            
+
+            args = shl_split_line(command);
+            status = shl_execute(args);
+            free(args);
+            close(pipefd[0]);
+        } else if (pid_2 < 0) {
+            perror("shl: fork failed");
+            exit(EXIT_FAILURE);
+        } else {
+            // parent waits
+            close(pipefd[0]);
+            close(pipefd[1]);
+            do {
+               // wpid = waitpid(pid_1, &status, WUNTRACED);
+                wpid = waitpid(pid_2, &status, WUNTRACED);
+            } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+        }
+        
+    }
+        command = strtok(NULL, "|");
+    }while (command != NULL);
+    return 0;
+}
+
 #define SHL_TOK_BUFSIZE 64
 #define SHL_TOK_DELIM " \t\r\n\a"
 char **shl_split_line(char *line){
@@ -162,18 +272,18 @@ char **shl_split_line(char *line){
 void shl_loop(void){
     // initialize
     char *line;
-    char **args;
     int status;
 
     // parse and execute loop
     do {
         printf("> ");
         line = shl_read_line();
-        args = shl_split_line(line);
-        status = shl_execute(args);
+        // make pipe to split code cluster
+        // execute either version single or pipe
+
+        status = shl_pipe(line);
 
         free(line);
-        free(args);
     } while (status);
     
 }

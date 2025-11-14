@@ -18,7 +18,7 @@ char *shl_read_line(void);
 char **shl_split_line(char *line);
 void shl_loop(void);
 
-int shl_pipe(commands_t **commands);
+int shl_pipe(char *commands_line);
 
 
 
