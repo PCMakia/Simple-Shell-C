@@ -13,3 +13,6 @@ Alpha 2:
 + wild card * will match all characters until encounter (space)
 + Single ? will match any single character
 + Square bracket [] will match all within set of 1 digit range, ex [1-9] will match a character as one of the number in range
+
+Adjustment 2.1
+- Fix the bug where tokenizer ignore the open quotations without closing

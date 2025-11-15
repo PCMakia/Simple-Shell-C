@@ -447,6 +447,10 @@ char **shl_tokenizer(char *line){
                 append_char(&cmd, &cmdLen, &cmdCap, line[i]);
         }
     }
+    if (!doubQ && !singleQ && !sq) {
+        perror("shl: unmatched quotation mark");
+        exit(EXIT_FAILURE);
+    }
     if (cmdLen > 0) {
     commands[position++] = strdup(cmd);
     }
