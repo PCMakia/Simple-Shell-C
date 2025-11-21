@@ -25,3 +25,11 @@ int shl_pipe(char *commands_line);
 
 void append_char(char **buf, int *len, int *cap, char c); 
 void clear_list(commands_t** head_ref);
+
+// File and directory commands
+typedef unsigned int mode_t;
+void shl_ls_mode(mode_t m, char *buf);
+int shl_ls(const char *path, int Lfmt);
+void shl_find_recursive(const char *dir, char **patterns);
+int shl_find(char **args);
+char **shl_goblin(char **commands); // globbing expansion

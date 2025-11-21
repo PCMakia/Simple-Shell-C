@@ -5,6 +5,14 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <assert.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <pwd.h>
+#include <grp.h>
+#include <time.h>
+#include <fnmatch.h>
+#include <glob.h>
 #include "header.h"
 
 
@@ -152,10 +160,30 @@ int shl_pipe(char *line) {
     // If no pipe, execute normally
     if (cmd_count == 1) {
         char **args = shl_tokenizer(commands[0]);
-        /* for (int i = 0; args[i] != NULL; i++) {
-        printf("Arg %d: %s\n", i, args[i]);
-        }  For testing new tokenizer */
-        int status = shl_execute(args);
+        char **expanded = shl_goblin(args);
+        free(args);   
+        args = expanded;
+        
+        int status;
+        // if command is sh_ls then call shl_ls
+        if (strcmp(args[0], "sh_ls") == 0) {
+                int Lfmt = 0;
+                const char *path = ".";
+
+                for (int i = 1; args[i]; i++) {
+                    if (strcmp(args[i], "-l") == 0) {
+                        Lfmt = 1;  
+                    }
+                    else {
+                        path = args[i];
+                    }
+                }
+                shl_ls(path, Lfmt);
+        } else if (strcmp(args[0], "sh_find") == 0) {
+            status = shl_find(args);
+        } else {
+            status = shl_execute(args);
+            }
         free(args);
         return status;
     }
@@ -198,10 +226,31 @@ int shl_pipe(char *line) {
             }
 
             char **args = shl_tokenizer(commands[i]);
-           /* for (int i = 0; args[i] != NULL; i++) {
-            printf("Arg %d: %s\n", i, args[i]);
-            }  For testing new tokenizer */
-            shl_execute(args);
+            char **expanded = shl_goblin(args);
+            free(args);  
+            args = expanded;
+            
+            // if command is sh_ls then call shl_ls
+            if (strcmp(args[0], "sh_ls") == 0) {
+                int Lfmt = 0;
+                const char *path = ".";
+
+                for (int i = 1; args[i]; i++) {
+                    if (strcmp(args[i], "-l") == 0) {
+                        Lfmt = 1;  
+                    }
+                    else {
+                        path = args[i];
+                    }
+                }
+                shl_ls(path, Lfmt);
+            
+            } else if (strcmp(args[0], "sh_find") == 0) {
+                shl_find(args);
+            } else {
+                shl_execute(args);
+            }
+
             free(args);
 
             exit(EXIT_FAILURE); // shl_execute only returns on failure
@@ -302,7 +351,7 @@ char **shl_tokenizer(char *line){
     bool wild = false, doubQ = false, singleQ = false, sq = false, sqR = false;
    
     for (int i = 0; line[i] != '\0'; i++){
-        if (wild) {
+       /* if (wild) {
             // add all totens till *space*
             if (isspace(line[i])) {
                 wild = false;
@@ -333,7 +382,7 @@ char **shl_tokenizer(char *line){
             sqR = false;
             continue;
         }    
-        
+        */
         switch (line[i]) {
             case '\\':
                 if (doubQ || !singleQ){ // allow escape in double quotes
@@ -349,7 +398,7 @@ char **shl_tokenizer(char *line){
             case '\'': // single quote, no escape allowed
                 singleQ = !singleQ;
                 break;
-            case '*':
+            /*case '*':
                 wild = true;
                 break;
             case '?': // match any single character
@@ -391,29 +440,6 @@ char **shl_tokenizer(char *line){
                 }
                 
                 break;
-
-
-           /* case '[':
-                // match all within set 1 digit numbers [0-9] (could implement negate or category later)
-                sq = true;
-                int check = find('-', &line[i]);
-                if (check != -1) {
-                    // range detected
-                    sqR = true;
-                    if (isdigit(line[i+1])) {
-                        char* num_start = "";
-                        char* num_end = "";
-                        num_start += line[i+1];
-                        num_end += line[check+1];
-                        int start = atoi(num_start);
-                        int end = atoi(num_end);
-                        Rlist = malloc((end - start + 1) * sizeof(int*));
-                        for (int n = start; n <= end + 1; n++) {
-                            Rlist[n - start] = str(n);
-                        }
-                    }
-                }
-        */
             case ']':
                 if (!sqR) {
                     sq = false;
@@ -422,7 +448,7 @@ char **shl_tokenizer(char *line){
                 perror("shl: unmatched ] in range");
                 exit(EXIT_FAILURE);
                 break;
-            case ' ':
+            */case ' ':
                 if (!doubQ && !singleQ) {
                     // end of command
                     commands[position++] = strdup(cmd);
@@ -458,6 +484,183 @@ char **shl_tokenizer(char *line){
     free(cmd);
     return commands;
 }
+// helper function to get file stat convert to string (shl_ls)
+void shl_ls_mode(mode_t m, char *buf) {
+    buf[0] = S_ISDIR(m) ? 'd' :
+             S_ISLNK(m) ? 'l' :
+             S_ISCHR(m) ? 'c' :
+             S_ISBLK(m) ? 'b' :
+             S_ISSOCK(m)? 's' :
+             S_ISFIFO(m)? 'p' : '-';
+
+    buf[1] = (m & S_IRUSR) ? 'r' : '-';
+    buf[2] = (m & S_IWUSR) ? 'w' : '-';
+    buf[3] = (m & S_IXUSR) ? 'x' : '-';
+
+    buf[4] = (m & S_IRGRP) ? 'r' : '-';
+    buf[5] = (m & S_IWGRP) ? 'w' : '-';
+    buf[6] = (m & S_IXGRP) ? 'x' : '-';
+
+    buf[7] = (m & S_IROTH) ? 'r' : '-';
+    buf[8] = (m & S_IWOTH) ? 'w' : '-';
+    buf[9] = (m & S_IXOTH) ? 'x' : '-';
+
+    buf[10] = '\0';
+}
+
+
+// sh_ls command to list out files in directory (-l flag for long format)
+// print out all directories or files, inlcluding parent directory and its directory
+// base from text book
+int shl_ls(const char *path, int Lfmt){
+    // open directory, read all contents and print to stdout
+    DIR *dp = opendir(path);
+    if (dp == NULL) {
+        perror("shl_ls: No such file or directory");  
+        return 1;
+    }
+    struct dirent *d;
+    while ((d = readdir(dp)) != NULL) {
+        if (!Lfmt) {
+        printf("%lu %s\n", (unsigned long) d->d_ino, d->d_name);
+        } else {
+            char fullPath[1024];
+            snprintf(fullPath, sizeof(fullPath), "%s/%s", path, d->d_name);
+            struct stat st;
+            if (stat(fullPath, &st) < 0) {
+                perror("shl_ls: stat getting error");
+                continue;
+            }
+
+            char modeBuf[11];
+            shl_ls_mode(st.st_mode, modeBuf); // converting binary to text
+
+            struct passwd *pw = getpwuid(st.st_uid);
+            struct group  *gr = getgrgid(st.st_gid);
+            char timeBuf[64];
+            strftime(timeBuf, sizeof(timeBuf), "%b %d %H:%M", localtime(&st.st_mtime));
+
+            printf("%s %3lu %-8s %-8s %8lu %s %s\n",
+                modeBuf,
+                (unsigned long) st.st_nlink,
+                pw ? pw->pw_name : "?",
+                gr ? gr->gr_name : "?",
+                (unsigned long) st.st_size,
+                timeBuf,
+                d->d_name
+            );
+        }
+        
+    }
+    closedir(dp);
+    return 1;
+}
+// globbing helper for shl_find (goblin and globbing sounds similar - just a pun)
+// return list of expanded commands (possible commands from patterns)
+char **shl_goblin(char **commands) {
+
+    int outSize = 32;
+    int outPos  = 0;
+    char **expanded = malloc(outSize * sizeof(char*));
+
+    for (int i = 0; commands[i] != NULL; i++) {
+        char *tok = commands[i];
+
+        
+        if (!strpbrk(tok, "*?["))
+        {
+            if (outPos >= outSize) {
+                outSize *= 2;
+                expanded = realloc(expanded, outSize * sizeof(char*));
+            }
+            expanded[outPos++] = strdup(tok);
+            continue;
+        }
+        // expansion the patterns
+        glob_t g;
+        int check = glob(tok, 0, NULL, &g);
+
+        if (check == 0) {
+            for (size_t k = 0; k < g.gl_pathc; k++) {
+                if (outPos >= outSize) {
+                    outSize *= 2;
+                    expanded = realloc(expanded, outSize * sizeof(char*));
+                }
+                expanded[outPos++] = strdup(g.gl_pathv[k]);
+            }
+        } else {
+            if (outPos >= outSize) {
+                outSize *= 2;
+                expanded = realloc(expanded, outSize * sizeof(char*));
+            }
+            expanded[outPos++] = strdup(tok);
+        }
+
+        globfree(&g);
+    }
+
+    expanded[outPos] = NULL;
+    return expanded;
+}
+
+
+// shl_find recursive helper to find inside directories
+void shl_find_recursive(const char *dir, char **patterns) {
+    DIR *dp = opendir(dir);
+    if (!dp) return;
+
+    struct dirent *d;
+    char pathbuf[1024];
+
+    while ((d = readdir(dp)) != NULL) {
+
+        if (strcmp(d->d_name, ".") == 0 || strcmp(d->d_name, "..") == 0)
+            continue;
+        // expanding path to deeper directory
+        snprintf(pathbuf, sizeof(pathbuf), "%s/%s", dir, d->d_name);
+
+        for (int i = 0; patterns[i]; i++) {
+                if (strcmp(d->d_name, patterns[i]) == 0)
+                    printf("%s\n", pathbuf);        
+            }
+        struct stat st;
+        // more directories to search into
+        if (stat(pathbuf, &st) == 0 && S_ISDIR(st.st_mode)) {
+            shl_find_recursive(pathbuf, patterns);
+        }
+    }
+
+    closedir(dp);
+}
+
+// sh_find command to find files matching a pattern (globbing pattern support)
+// from curent directory and subdirectories
+int shl_find(char **args) {
+    if (!args[1]) {
+        perror("Usage: sh_find <patterns1> <pattern2> ...");
+        exit(EXIT_FAILURE);
+    }
+
+    const char *start_dir = ".";
+    int pat_start = 1;
+ 
+    struct stat st;
+    if (args[1] && stat(args[1], &st) == 0 && S_ISDIR(st.st_mode)) {
+        start_dir = args[1];
+        pat_start = 2;
+    }
+
+    if (!args[pat_start]) {
+        perror("sh_find: no patterns provided");
+        exit(EXIT_FAILURE);;
+    }
+
+    shl_find_recursive(start_dir, &args[pat_start]);
+    return 1;
+}
+
+
+
 
 void shl_loop(void){
     // initialize
